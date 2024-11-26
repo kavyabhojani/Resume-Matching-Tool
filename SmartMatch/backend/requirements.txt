@@ -1,0 +1,6 @@
+flask
+transformers
+torch
+spacy
+numpy
+pandas
