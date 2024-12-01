@@ -3,174 +3,266 @@ from transformers import AutoTokenizer, AutoModel
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
 import re
+import numpy as np
+from typing import Dict, List, Any
 
 # Load spaCy model
 nlp = spacy.load("en_core_web_sm")
 
-# Load BERT model and tokenizer
+# Load BERT model
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-# Define global keyword lists
-SKILLS_KEYWORDS = [
-    "Python", "SQL", "machine learning", "Kubernetes", "cloud computing",
-    "Docker", "Java", "C++", "TensorFlow", "PyTorch", "data engineering", 
-    "DevOps", "React", "AI", "NLP", "big data", "databases", "microservices",
-    "Agile", "Scrum", "ETL pipelines", "Power BI", "Tableau", "AWS", "GCP", "Azure"
-]
-EDUCATION_KEYWORDS = [
-    "Bachelor", "Master", "PhD", "B.Sc", "M.Sc", "Diploma", "Certification",
-    "Associate Degree", "Postgraduate", "Professional Certificate",
-    "Doctorate", "High School", "MBA"
-]
+# Enhanced skill categories based on reference project
+SKILL_CATEGORIES = {
+    "PROGRAMMING": [
+        "python", "java", "javascript", "c++", "c#", "ruby", "php",
+        "swift", "golang", "rust", "scala"
+    ],
+    "WEB_DEVELOPMENT": [
+        "html", "css", "react", "angular", "vue", "node.js", "django",
+        "flask", "ruby on rails", "asp.net"
+    ],
+    "DATA_SCIENCE": [
+        "machine learning", "deep learning", "nlp", "computer vision",
+        "tensorflow", "pytorch", "scikit-learn", "pandas", "numpy"
+    ],
+    "CLOUD": [
+        "aws", "azure", "gcp", "docker", "kubernetes", "terraform",
+        "cloudformation"
+    ],
+    "DATABASE": [
+        "sql", "mysql", "postgresql", "mongodb", "redis", "elasticsearch",
+        "cassandra"
+    ]
+}
 
-def parse_text(text):
+# Enhanced degree patterns
+DEGREE_PATTERNS = {
+    "PHD-LEVEL": [r"ph\.?d", r"doctorate", r"doctoral"],
+    "MS-LEVEL": [r"master'?s?", r"m\.s\.", r"m\.sc\."],
+    "BS-LEVEL": [r"bachelor'?s?", r"b\.s\.", r"b\.sc\.", r"b\.a\."]
+}
+
+# Enhanced major patterns
+MAJOR_PATTERNS = {
+    "computer_science": [r"computer\s+science", r"cs"],
+    "software_engineering": [r"software\s+engineering", r"se"],
+    "data_science": [r"data\s+science", r"ds", r"data\s+analytics"],
+    "artificial_intelligence": [r"artificial\s+intelligence", r"ai", r"machine\s+learning"],
+    "information_technology": [r"information\s+technology", r"it", r"information\s+systems"]
+}
+
+def parse_text(text: str) -> Dict[str, Any]:
     """
-    Parses text to extract skills, experience, and education using enhanced rules and spaCy NER.
-    :param text: Input text (resume or job description)
-    :return: Dictionary with extracted information
+    Enhanced text parsing function that extracts skills, education, and experience
+    using improved pattern matching and classification.
     """
-    # Extract skills and education using keyword matching
-    skills = match_keywords(text, SKILLS_KEYWORDS)
-    education = extract_education(text)
-
-    # Extract experience
-    experience = parse_experience(text)
-
-    # Use spaCy NER for complementary parsing
-    doc = nlp(text)
-    ner_skills = [ent.text for ent in doc.ents if ent.label_ in {"SKILL", "WORK_OF_ART"}]
-    ner_education = [ent.text for ent in doc.ents if ent.label_ == "EDUCATION"]
-
-    # Validate and merge NER results
-    ner_skills = [skill for skill in ner_skills if skill.lower() in map(str.lower, SKILLS_KEYWORDS)]
-    ner_education = [edu for edu in ner_education if edu.lower() in map(str.lower, EDUCATION_KEYWORDS)]
-    skills = list(set(skills + ner_skills))
-    education = list(set(education + ner_education))
-
+    doc = nlp(text.lower())
+    
+    # Extract skills with categorization
+    skills = extract_skills(doc)
+    
+    # Extract education with improved pattern matching
+    education = extract_education(doc)
+    
+    # Extract experience with better number recognition
+    experience = parse_experience(doc)
+    
+    # Extract additional contextual information
+    context = extract_context(doc)
+    
     return {
         "skills": skills,
+        "education": education,
         "experience": experience,
-        "education": education
+        "context": context
     }
 
-def match_keywords(text, keywords):
-    """
-    Matches keywords in the text using exact, case-insensitive matching.
-    Prioritizes multi-word phrases.
-    :param text: Input text to search.
-    :param keywords: List of keywords to match.
-    :return: List of matched keywords.
-    """
-    # Sort keywords by length (descending) to prioritize multi-word phrases
-    keywords = sorted(keywords, key=len, reverse=True)
-
-    matched = []
-    for keyword in keywords:
-        # Match whole words or phrases
-        if re.search(rf'\b{re.escape(keyword)}\b', text, re.IGNORECASE):
-            matched.append(keyword)
-    return matched
-
-def extract_education(text):
-    """
-    Extracts education-related information using regex and keyword matching.
-    :param text: Input text (resume or job description)
-    :return: List of extracted education details.
-    """
-    education_patterns = [
-        r"(Bachelor['s]*\s(?:degree)?)", r"(Master['s]*\s(?:degree)?)", r"(PhD|Doctorate)"
-    ]
-    education = []
-    for pattern in education_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        education.extend(matches)
-
-    # Normalize and deduplicate
-    education = list(set([edu.strip().lower().title() for edu in education]))
-
-    # Add results from keyword matching
-    education += [edu.lower().title() for edu in match_keywords(text, EDUCATION_KEYWORDS)]
-    return list(set(education))  # Deduplicate
-
-def parse_experience(text):
-    """
-    Parses text to extract years of experience using regex patterns.
-    :param text: Input text (resume or job description)
-    :return: List of extracted years of experience.
-    """
-    experience_pattern = r"(\d+)(?:-(\d+))?\s+years?\s+of\s+experience|\bat\s+least\s+(\d+)\s+years"
-    matches = re.findall(experience_pattern, text)
+def extract_skills(doc: spacy.tokens.Doc) -> Dict[str, List[str]]:
+    """Enhanced skill extraction with categorization."""
+    skills = {category: [] for category in SKILL_CATEGORIES}
     
+    # Extract skills using pattern matching
+    for sentence in doc.sents:
+        for category, category_skills in SKILL_CATEGORIES.items():
+            for skill in category_skills:
+                if skill.lower() in sentence.text.lower():
+                    skills[category].append(skill)
+    
+    # Extract skills using NER
+    for ent in doc.ents:
+        if ent.label_ in {"PRODUCT", "ORG", "GPE"}:
+            # Check if entity might be a technology/tool
+            if any(tech_word in ent.text.lower() for tech_word in 
+                  ["framework", "language", "tool", "platform", "library"]):
+                for category, category_skills in SKILL_CATEGORIES.items():
+                    if any(skill.lower() in ent.text.lower() for skill in category_skills):
+                        skills[category].append(ent.text)
+    
+    # Remove duplicates and empty categories
+    return {k: list(set(v)) for k, v in skills.items() if v}
+
+def extract_education(doc: spacy.tokens.Doc) -> List[str]:
+    """Enhanced education extraction with better degree pattern matching."""
+    education = []
+    text = doc.text.lower()
+    
+    # Extract degrees using enhanced patterns
+    for level, patterns in DEGREE_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                education.append(level)
+                
+    # Extract majors using enhanced patterns
+    majors = []
+    for field, patterns in MAJOR_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                majors.append(field)
+                
+    return list(set(education)) + list(set(majors))
+
+def parse_experience(doc: spacy.tokens.Doc) -> List[int]:
+    """Enhanced experience extraction with better number recognition."""
     experience = []
-    for match in matches:
-        if match[1]:  # Handle ranges (e.g., "3-5 years")
-            experience.append(int(match[0]))  # Lower bound
-            experience.append(int(match[1]))  # Upper bound
-        elif match[0]:  # Single value (e.g., "3 years")
-            experience.append(int(match[0]))
-        elif match[2]:  # "at least N years"
-            experience.append(int(match[2]))
-    return sorted(set(experience))  # Remove duplicates and sort
+    
+    # Common experience patterns
+    patterns = [
+        r"(\d+)\+?\s*(?:-\s*\d+)?\s*years?(?:\s+of)?\s+experience",
+        r"at least (\d+)\s*years?(?:\s+of)?\s+experience",
+        r"minimum (?:of\s+)?(\d+)\s*years?(?:\s+of)?\s+experience"
+    ]
+    
+    text = doc.text.lower()
+    
+    # Extract years of experience
+    for pattern in patterns:
+        matches = re.finditer(pattern, text)
+        for match in matches:
+            years = int(match.group(1))
+            experience.append(years)
+    
+    return sorted(set(experience)) if experience else []
 
-def get_embeddings(text):
-    """
-    Converts input text into embedding vector using BERT.
-    :param text: Input text (resume or job description)
-    :return: Embedding vector
-    """
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
-    outputs = model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).detach().numpy()
-
-def calculate_similarity(resume_embedding, job_embedding):
-    """
-    Calculates similarity score between two embedding vectors.
-    :param resume_embedding: Embedding vector of the resume
-    :param job_embedding: Embedding vector of the job description
-    :return: Similarity score (percentage)
-    """
-    score = cosine_similarity(resume_embedding, job_embedding)
-    return score[0][0] * 100  # Convert to percentage
-
-def gap_analysis(resume_info, job_info):
-    """
-    Analyzes gaps between resume and job description and provides actionable feedback.
-    :param resume_info: Extracted information from resume
-    :param job_info: Extracted information from job description
-    :return: Dictionary with missing skills, education, experience gap, and feedback
-    """
-    # Missing skills
-    missing_skills = [skill for skill in job_info["skills"] if skill not in resume_info["skills"]]
-
-    # Missing education
-    missing_education = [edu for edu in job_info["education"] if edu not in resume_info["education"]]
-
-    # Experience gap
-    required_experience = int(job_info["experience"][0]) if job_info["experience"] else 0
-    resume_experience = int(resume_info["experience"][0]) if resume_info["experience"] else 0
-    experience_gap = max(0, required_experience - resume_experience)
-
-    # Feedback generation
-    feedback = {}
-    if missing_skills:
-        feedback["skills"] = [
-            f"Consider learning or gaining experience in {skill}. Platforms like Coursera or Udemy might help."
-            for skill in missing_skills
-        ]
-    if missing_education:
-        feedback["education"] = [
-            f"Consider obtaining a degree or certification in {edu} to align with job requirements."
-            for edu in missing_education
-        ]
-    if experience_gap > 0:
-        feedback["experience"] = [
-            f"You are short by {experience_gap} years of experience. Consider taking on freelance projects or internships."
-        ]
-
-    return {
-        "missing_skills": missing_skills,
-        "missing_education": missing_education,
-        "experience_gap": experience_gap,
-        "feedback": feedback
+def extract_context(doc: spacy.tokens.Doc) -> Dict[str, List[str]]:
+    """Extract additional contextual information from the text."""
+    context = {
+        "tools": [],
+        "platforms": [],
+        "methodologies": [],
+        "industries": []
     }
+    
+    # Common contextual patterns
+    context_patterns = {
+        "tools": [r"using (\w+)", r"experience with (\w+)", r"knowledge of (\w+)"],
+        "platforms": [r"on (\w+ platform)", r"(\w+) platform", r"(\w+) environment"],
+        "methodologies": [r"(agile|scrum|waterfall|kanban)", r"(ci/cd|devops)"],
+        "industries": [r"in ([\w\s]+) industry", r"([\w\s]+) sector"]
+    }
+    
+    text = doc.text.lower()
+    
+    # Extract context using patterns
+    for category, patterns in context_patterns.items():
+        for pattern in patterns:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                context[category].append(match.group(1))
+    
+    return {k: list(set(v)) for k, v in context.items() if v}
+
+def get_embeddings(text: str) -> np.ndarray:
+    """Generate embeddings using BERT with better text preprocessing."""
+    # Clean and preprocess text
+    text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+    text = re.sub(r'[^\w\s]', ' ', text)  # Remove punctuation
+    
+    # Generate embeddings
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    outputs = model(**inputs)
+    
+    # Use mean pooling for better representation
+    attention_mask = inputs['attention_mask']
+    token_embeddings = outputs.last_hidden_state
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    embeddings = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+    
+    return embeddings.detach().numpy()
+
+def calculate_similarity(resume_embedding: np.ndarray, job_embedding: np.ndarray) -> float:
+    """Calculate similarity with enhanced scoring."""
+    # Calculate cosine similarity
+    base_score = float(cosine_similarity(resume_embedding, job_embedding)[0][0])
+    
+    # Scale score to percentage and round to 1 decimal
+    score = round(base_score * 100, 1)
+    
+    # Ensure score is between 0 and 100
+    return max(0, min(score, 100))
+
+
+def gap_analysis(resume_info: Dict, job_info: Dict) -> Dict:
+    """Enhanced gap analysis with better feedback generation and empty value handling."""
+    gaps = {
+        "missing_skills": [],
+        "missing_education": [],
+        "experience_gap": 0,
+        "feedback": {
+            "skills": [],
+            "education": [],
+            "experience": []
+        }
+    }
+    
+    # Analyze skill gaps with categories
+    job_skills = set(job_info.get("skills", [])) if isinstance(job_info.get("skills"), list) else set()
+    resume_skills = set(resume_info.get("skills", [])) if isinstance(resume_info.get("skills"), list) else set()
+    
+    missing = job_skills - resume_skills
+    if missing:
+        gaps["missing_skills"] = list(missing)
+        gaps["feedback"]["skills"] = [
+            f"Consider gaining experience in {skill}" for skill in missing
+        ]
+    
+    # Analyze education gaps - Handle potential None or non-list values
+    job_education = set(job_info.get("education", [])) if isinstance(job_info.get("education"), list) else set()
+    resume_education = set(resume_info.get("education", [])) if isinstance(resume_info.get("education"), list) else set()
+    
+    missing_education = job_education - resume_education
+    if missing_education:
+        gaps["missing_education"] = list(missing_education)
+        for edu in missing_education:
+            if "LEVEL" in str(edu):
+                gaps["feedback"]["education"].append(
+                    f"Consider pursuing a {str(edu).replace('-LEVEL', '').lower()} degree"
+                )
+            else:
+                gaps["feedback"]["education"].append(
+                    f"Consider studying {str(edu).lower()}"
+                )
+    
+    # Analyze experience gap - Handle empty sequences and None values
+    try:
+        job_exp = max(job_info.get("experience", [0]) or [0])
+    except (ValueError, TypeError):
+        job_exp = 0
+        
+    try:
+        resume_exp = max(resume_info.get("experience", [0]) or [0])
+    except (ValueError, TypeError):
+        resume_exp = 0
+    
+    if job_exp > resume_exp:
+        gap = job_exp - resume_exp
+        gaps["experience_gap"] = gap
+        gaps["feedback"]["experience"].append(
+            f"You need {gap} more years of experience. Consider:"
+            f"\n- Taking on more responsibilities in your current role"
+            f"\n- Working on relevant side projects"
+            f"\n- Contributing to open source projects"
+        )
+    
+    return gaps
