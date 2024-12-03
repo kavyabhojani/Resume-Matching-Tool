@@ -1,5 +1,11 @@
 from flask import Blueprint, request, jsonify
-from app.services import parse_text, get_embeddings, calculate_similarity, gap_analysis
+from app.services import (
+    parse_text,
+    get_embeddings,
+    calculate_combined_score,
+    gap_analysis,
+)
+
 from app.utils import extract_text_from_file
 import logging
 
@@ -11,10 +17,9 @@ def analyze():
     API endpoint to analyze resume and job description.
     :return: Match score, extracted information, and gap analysis with feedback
     """
-    # Handle preflight OPTIONS request
     if request.method == "OPTIONS":
         return "", 204
-        
+
     data = request.json
     if not data:
         return jsonify({"error": "No JSON data provided"}), 400
@@ -35,8 +40,7 @@ def analyze():
         job_embedding = get_embeddings(job_desc_text)
 
         # Calculate similarity
-        match_score = calculate_similarity(resume_embedding, job_embedding)
-        match_score = float(match_score)  # Ensure JSON serializable
+        match_score = float(calculate_combined_score(resume_info, job_info))
 
         # Perform gap analysis with feedback
         gaps = gap_analysis(resume_info, job_info)
@@ -50,7 +54,7 @@ def analyze():
     except Exception as e:
         logging.error(f"Error in analyze endpoint: {str(e)}", exc_info=True)
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
-
+    
 @routes.route("/upload", methods=["POST", "OPTIONS"])
 def upload_files():
     """
