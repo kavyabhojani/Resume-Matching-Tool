@@ -20,6 +20,7 @@ const SkillsSection = ({ title, skills }) => (
   )
 );
 
+
 const ContextSection = ({ title, context }) => (
   context && Object.keys(context).length > 0 && (
     <div className="mt-6">
