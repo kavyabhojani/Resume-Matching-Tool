@@ -7,14 +7,28 @@ function App() {
   const [results, setResults] = useState(null)
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-50">
       <Toaster position="top-right" />
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto py-6 px-4">
-          <h1 className="text-3xl font-bold text-gray-900">SmartMatch</h1>
-          <p className="mt-1 text-sm text-gray-500">Resume Matching and Feedback Tool</p>
+      
+      <nav className="bg-gradient-to-r from-indigo-500 to-indigo-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div>
+              <h1 className="text-2xl font-semibold text-white">SmartMatch</h1>
+            </div>
+            
+            {results && (
+              <button
+                onClick={() => setResults(null)}
+                className="px-4 py-2 text-sm font-medium text-indigo-600 bg-white rounded-md hover:bg-indigo-50 transition-colors duration-200"
+              >
+                New Analysis
+              </button>
+            )}
+          </div>
         </div>
-      </header>
+      </nav>
+
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {!results ? (
           <ResumeUpload setResults={setResults} />
